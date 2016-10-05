@@ -504,6 +504,7 @@
         content.body = [NSString localizedUserNotificationStringForKey:notification.alertBody
                                                              arguments:nil];
         content.sound = [UNNotificationSound defaultSound];
+        content.userInfo = notification.userInfo;
 
 
         NSDate *fireDate = notification.fireDate;
