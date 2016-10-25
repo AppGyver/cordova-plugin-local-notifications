@@ -36,7 +36,9 @@ import org.json.JSONObject;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.UUID;
 
 import de.appplant.cordova.plugin.notification.Manager;
 import de.appplant.cordova.plugin.notification.Notification;
@@ -49,17 +51,13 @@ import de.appplant.cordova.plugin.notification.Notification;
  */
 public class LocalNotification extends CordovaPlugin {
 
-    // Reference to the web view for static access
-    private static CordovaWebView webView = null;
-
-    // Indicates if the device is ready (to receive events)
-    private static Boolean deviceready = false;
+    // Reference to the web views and their state for static access
+    private static HashMap<CordovaWebView, CordovaWebViewState> mCordovaWebViewStates = new HashMap<>();
 
     // To inform the user about the state of the app in callbacks
     protected static Boolean isInBackground = true;
 
-    // Queues all events before deviceready
-    private static ArrayList<String> eventQueue = new ArrayList<String>();
+    private static HashMap<UUID, String> mEventsHistory = new HashMap<>();
 
     /**
      * Called after plugin construction and fields have been initialized.
@@ -71,7 +69,7 @@ public class LocalNotification extends CordovaPlugin {
     @Override
     public void initialize (CordovaInterface cordova, CordovaWebView webView) {
         super.initialize(cordova, webView);
-        LocalNotification.webView = super.webView;
+        LocalNotification.mCordovaWebViewStates.put(webView, new CordovaWebViewState());
     }
 
     /**
@@ -96,7 +94,7 @@ public class LocalNotification extends CordovaPlugin {
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
         isInBackground = false;
-        deviceready();
+        deviceready(webView);
     }
 
     /**
@@ -104,8 +102,7 @@ public class LocalNotification extends CordovaPlugin {
      */
     @Override
     public void onDestroy() {
-        deviceready = false;
-        isInBackground = true;
+        mCordovaWebViewStates.remove(webView);
     }
 
     /**
@@ -196,7 +193,7 @@ public class LocalNotification extends CordovaPlugin {
                     getTriggered(args, command);
                 }
                 else if (action.equals("deviceready")) {
-                    deviceready();
+                    deviceready(webView);
                 }
             }
         });
@@ -517,13 +514,27 @@ public class LocalNotification extends CordovaPlugin {
 
     /**
      * Call all pending callbacks after the deviceready event has been fired.
+     * @param webView
      */
-    private static synchronized void deviceready () {
-        isInBackground = false;
-        deviceready = true;
+    private static synchronized void deviceready(CordovaWebView webView) {
+        CordovaWebViewState cordovaWebViewState = mCordovaWebViewStates.get(webView);
 
+        cordovaWebViewState.setIsDeviceReady(true);
+
+        for (UUID eventUUID : LocalNotification.mEventsHistory.keySet()) {
+            ArrayList<UUID> cordovaWebViewEventHistory = cordovaWebViewState.getEventHistory();
+
+            if (!cordovaWebViewEventHistory.contains(eventUUID)) {
+                String event = LocalNotification.mEventsHistory.get(eventUUID);
+
+                webView.sendJavascript(event);
+                cordovaWebViewEventHistory.add(eventUUID);
+            }
+        }
+
+        ArrayList<String> eventQueue = cordovaWebViewState.getEventQueue();
         for (String js : eventQueue) {
-            sendJavascript(js);
+            webView.sendJavascript(js);
         }
 
         eventQueue.clear();
@@ -547,7 +558,7 @@ public class LocalNotification extends CordovaPlugin {
      * @param notification
      *      Optional local notification to pass the id and properties.
      */
-    static void fireEvent (String event, Notification notification) {
+    static synchronized void fireEvent (String event, Notification notification) {
         String state = getApplicationState();
         String params = "\"" + state + "\"";
 
@@ -558,21 +569,34 @@ public class LocalNotification extends CordovaPlugin {
         String js = "cordova.plugins.notification.local.core.fireEvent(" +
                 "\"" + event + "\"," + params + ")";
 
-        sendJavascript(js);
+        UUID eventUUID = UUID.randomUUID();
+
+        for (final CordovaWebView webView : mCordovaWebViewStates.keySet()) {
+            CordovaWebViewState cordovaWebViewState = mCordovaWebViewStates.get(webView);
+            ArrayList<UUID> cordovaWebViewEventHistory = cordovaWebViewState.getEventHistory();
+
+            sendJavascript(webView, js);
+            cordovaWebViewEventHistory.add(eventUUID);
+        }
+
+        LocalNotification.mEventsHistory.put(eventUUID, js);
     }
 
     /**
      * Use this instead of deprecated sendJavascript
      *
+     * @param webView
      * @param js
      *       JS code snippet as string
      */
-    private static synchronized void sendJavascript(final String js) {
+    private static synchronized void sendJavascript(final CordovaWebView webView, final String js) {
+        CordovaWebViewState cordovaWebViewState = mCordovaWebViewStates.get(webView);
 
-        if (!deviceready) {
-            eventQueue.add(js);
+        if (!cordovaWebViewState.isDeviceReady()) {
+            cordovaWebViewState.getEventQueue().add(js);
             return;
         }
+
         Runnable jsLoader = new Runnable() {
             public void run() {
                 webView.loadUrl("javascript:" + js);
