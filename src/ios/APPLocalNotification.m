@@ -28,6 +28,9 @@
 
 #import <UserNotifications/UserNotifications.h>
 
+static NSMutableArray *startupEventsBuffer;
+static BOOL startupEventsBufferFlushed = false;
+
 @interface APPLocalNotification ()
 
 // Retrieves the application state
@@ -45,6 +48,10 @@
 
 @synthesize deviceready, eventQueue;
 
++(void)load {
+    startupEventsBuffer = [NSMutableArray array];
+}
+
 #pragma mark -
 #pragma mark Interface
 
@@ -60,6 +67,15 @@
     }
 
     [eventQueue removeAllObjects];
+}
+
+- (void) flushStartupEvents:(CDVInvokedUrlCommand*)command {
+    startupEventsBufferFlushed = true;
+    for (NSString* js in startupEventsBuffer) {
+        [self.commandDelegate evalJs:js];
+    }
+
+    [startupEventsBuffer removeAllObjects];
 }
 
 /**
@@ -761,6 +777,12 @@
     js = [NSString stringWithFormat:
           @"cordova.plugins.notification.local.core.fireEvent('%@', %@)",
           event, params];
+
+    BOOL shouldBuffer = !startupEventsBufferFlushed;
+    BOOL notYetBuffered = ![startupEventsBuffer containsObject:js];
+    if (shouldBuffer && notYetBuffered) {
+        [startupEventsBuffer addObject:js];
+    }
 
     if (deviceready) {
         [self.commandDelegate evalJs:js];

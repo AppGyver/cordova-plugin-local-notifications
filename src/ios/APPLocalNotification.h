@@ -29,6 +29,8 @@
 // Execute all queued events
 - (void) deviceready:(CDVInvokedUrlCommand*)command;
 
+- (void) flushStartupEvents:(CDVInvokedUrlCommand*)command;
+
 // Inform if the app has the permission to show notifications
 - (void) hasPermission:(CDVInvokedUrlCommand*)command;
 // Register permission to show notifications
